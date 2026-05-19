@@ -2,36 +2,12 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from shapely import wkt
 from shapely.geometry import Point
+import csv
+from pathlib import Path
 
 app = FastAPI()
 
-polygon_wkt = """
-POLYGON ((-63.125925 46.191968, -63.129249 46.197682, -63.160804 46.209456, 
--63.169438 46.206527, -63.178532 46.203442, -63.187627 46.200357, -63.196721 46.197272, 
--63.205816 46.194188, -63.209914 46.192797, -63.210298 46.192726, -63.214264 46.192566, 
--63.224337 46.19216, -63.234121 46.191766, -63.243753 46.187006, -63.244782 46.186932, 
--63.252567 46.189465, -63.264739 46.190883, -63.276376 46.194511, -63.283669 46.198762, 
--63.285552 46.209462, -63.286601 46.215494, -63.287049 46.221437, -63.28919 46.256974, 
--63.286057 46.284623, -63.267947 46.316259, -63.262591 46.316431, -63.258916 46.315588, 
--63.250191 46.313585, -63.250191 46.313585, -63.245568 46.312524, -63.201108 46.307234, 
--63.200376 46.307313, -63.169357 46.310685, -63.138576 46.31403, -63.138447 46.314038, 
--63.114907 46.314357, -63.114883 46.314358, -63.095651 46.314287, -63.09564 46.314287, 
--63.092525 46.314249, -63.092522 46.314249, -63.068799 46.313913, -63.067935 46.313589, 
--63.064911 46.311026, -63.061886 46.308496, -63.061877 46.308488, -63.057931 46.305128, 
--63.000268 46.306833, -62.973955 46.317001, -62.949253 46.326546, -62.945115 46.32668, 
--62.943625 46.326205, -62.938759 46.302137, -62.925934 46.279099, -62.917463 46.271131, 
--62.865401 46.280221, -62.839903 46.284704, -62.823277 46.287894, -62.820549 46.287026, 
--62.819639 46.285947, -62.818744 46.277951, -62.821265 46.270304, -62.821768 46.269359, 
--62.824389 46.263356, -62.825523 46.257388, -62.828429 46.248574, -62.837435 46.225782, 
--62.837467 46.225709, -62.842326 46.215242, -62.843221 46.210129, -62.842126 46.207027, 
--62.842826 46.204904, -62.845563 46.201294, -62.864003 46.188252, -62.874333 46.175365, 
--62.874335 46.175363, -62.886701 46.160015, -62.891081 46.149512, -62.891269 46.14859, 
--62.893384 46.138214, -62.905311 46.122482, -62.922649 46.113706, -63.041611 46.121321, 
--63.045423 46.122509, -63.117284 46.177317, -63.117637 46.177717, -63.125925 46.191968, 
--63.125925 46.191968))
-"""
-
-polygon_obj = wkt.loads(polygon_wkt)
+CSV_PATH = Path(__file__).with_name("3-ers-grids-parents-only.csv")
 
 
 class CoordinateRequest(BaseModel):
@@ -39,19 +15,50 @@ class CoordinateRequest(BaseModel):
     latitude: float
 
 
+def load_regions():
+    regions = []
+
+    with CSV_PATH.open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+
+        for row in reader:
+            parent = row.get("parent")
+            geometry = row.get("geometry")
+
+            if parent and geometry:
+                regions.append({
+                    "parent": parent,
+                    "polygon": wkt.loads(geometry)
+                })
+
+    return regions
+
+
+regions = load_regions()
+
+
 @app.get("/")
 def health_check():
-    return {"status": "API is running"}
+    return {
+        "status": "API is running",
+        "regions_loaded": len(regions)
+    }
 
 
 @app.post("/check-location")
 def check_location(request: CoordinateRequest):
     point = Point(request.longitude, request.latitude)
-    is_inside = polygon_obj.covers(point)
+
+    matches = []
+
+    for region in regions:
+        if region["polygon"].covers(point):
+            matches.append(region["parent"])
 
     return {
         "longitude": request.longitude,
         "latitude": request.latitude,
-        "inside": is_inside,
-        "message": "INSIDE polygon" if is_inside else "OUTSIDE polygon"
+        "inside": len(matches) > 0,
+        "parent": matches[0] if matches else None,
+        "matches": matches
     }
